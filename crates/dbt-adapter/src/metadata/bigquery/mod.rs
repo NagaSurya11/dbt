@@ -1331,7 +1331,9 @@ impl MetadataAdapter for BigqueryMetadataAdapter {
                     .map_err(adbc_error_to_adapter_error)?;
                 let mut schema_builder = SchemaBuilder::from(schema.fields());
 
-                if let Some(time_partitioning_type) = schema.metadata().get("TimePartitioning.Type")
+                if schema.metadata().get("TimePartitioning.Field").is_none()
+                    && let Some(time_partitioning_type) =
+                        schema.metadata().get("TimePartitioning.Type")
                 {
                     schema_builder.push(Field::new(
                         "_PARTITIONTIME",
@@ -1445,7 +1447,7 @@ impl MetadataAdapter for BigqueryMetadataAdapter {
             with_relation_list_item_span(
                 report_progress.then_some(RELATION_CACHE_OP_ID),
                 &db_schema.to_string(),
-                || adapter.list_relations(&query_ctx, conn, db_schema, token_clone.clone()),
+                || adapter.list_relations(None, &query_ctx, conn, db_schema, token_clone.clone()),
             )
         };
 

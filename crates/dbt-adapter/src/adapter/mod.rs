@@ -1474,6 +1474,7 @@ impl Adapter {
                             let query_ctx = query_ctx_from_state(state)?
                                 .with_desc("get_relation > list_relations call");
                             let maybe_relations_list = adapter.list_relations(
+                                Some(state),
                                 &query_ctx,
                                 conn.as_mut(),
                                 &db_schema,
@@ -2500,6 +2501,7 @@ impl Adapter {
                 let mut conn =
                     adapter.borrow_tlocal_connection(Some(state), node_id_from_state(state))?;
                 let result = adapter.list_relations(
+                    Some(state),
                     &query_ctx,
                     conn.as_mut(),
                     &CatalogAndSchema::from(schema_relation.as_ref()),
@@ -3616,27 +3618,6 @@ impl Adapter {
         }
     }
 
-    /// Wrap backtick-rendered SQL identifiers on metric_view `source:` lines in
-    /// YAML double quotes. Other keys are left untouched.
-    ///
-    /// Only available with Databricks adapter.
-    #[tracing::instrument(skip_all, level = "trace")]
-    pub fn yaml_quote_backtick_values(
-        &self,
-        _state: &State,
-        args: &[Value],
-    ) -> Result<Value, minijinja::Error> {
-        match &self.inner {
-            Typed { adapter, .. } => {
-                let iter = ArgsIter::new("yaml_quote_backtick_values", &["yaml_body"], args);
-                let yaml_body = iter.next_arg::<&str>()?;
-                iter.finish()?;
-                Ok(Value::from(adapter.yaml_quote_backtick_values(yaml_body)?))
-            }
-            Parse(_) => unimplemented!("yaml_quote_backtick_values"),
-        }
-    }
-
     /// Used internally to attempt executing a Snowflake `use warehouse [name]` statement.
     #[tracing::instrument(skip(self), level = "trace")]
     pub fn use_warehouse(
@@ -4271,8 +4252,6 @@ impl Adapter {
             "strip_trailing_statement_terminator" => {
                 self.strip_trailing_statement_terminator(state, args)
             }
-            // yaml_body: str
-            "yaml_quote_backtick_values" => self.yaml_quote_backtick_values(state, args),
             "get_seed_file_path" => {
                 // model: dict (seed node)
                 let iter = ArgsIter::new(name, &["model"], args);

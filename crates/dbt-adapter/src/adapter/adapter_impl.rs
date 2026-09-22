@@ -3,7 +3,8 @@ use crate::column::{BigqueryColumnMode, Column, ColumnBuilder};
 use crate::config::AdapterConfig;
 use crate::connection::{ConnectionGuard, borrow_tlocal_connection};
 use crate::engine::{
-    AdapterEngine, AdbcEngine, Options as ExecuteOptions, execute_query_with_retry,
+    AdapterEngine, AdbcEngine, Options as ExecuteOptions, databricks_statement_options,
+    execute_query_with_retry,
 };
 use crate::errors::{
     AdapterError, AdapterErrorKind, adbc_error_to_adapter_error, arrow_error_to_adapter_error,
@@ -1058,6 +1059,7 @@ impl AdapterImpl {
                 ))
             }
             Impl(_, engine) => {
+                let options = databricks_statement_options(self.adapter_type(), Some(state))?;
                 self.execute_inner(
                     Arc::clone(engine),
                     None,
@@ -1067,7 +1069,7 @@ impl AdapterImpl {
                     auto_begin,
                     false,
                     None,
-                    None,
+                    Some(options),
                     token,
                 )?;
                 Ok(())
@@ -2328,7 +2330,11 @@ impl AdapterImpl {
         // been cached or not
         let columns = match self.adapter_type() {
             Bigquery => {
-                columns.retain(|c| !BIGQUERY_PSEUDOCOLUMNS.contains(&c.name()));
+                columns.retain(|c| {
+                    !BIGQUERY_PSEUDOCOLUMNS
+                        .iter()
+                        .any(|pseudocolumn| pseudocolumn.eq_ignore_ascii_case(c.name()))
+                });
                 columns
             }
             _ => columns,
@@ -4116,6 +4122,7 @@ impl AdapterImpl {
     /// BaseAdapter https://github.com/dbt-labs/dbt-adapters/blob/0efd8d3d1081e1ab43e38797d5104f7b424a6284/dbt-adapters/src/dbt/adapters/base/impl.py#L973
     pub fn list_relations(
         &self,
+        state: Option<&State>,
         query_ctx: &QueryCtx,
         conn: &'_ mut dyn Connection,
         db_schema: &CatalogAndSchema,
@@ -4167,9 +4174,14 @@ impl AdapterImpl {
             Impl(Bigquery, engine) => {
                 bigquery::list_relations(engine.as_ref(), query_ctx, conn, db_schema, token)
             }
-            Impl(Databricks | Spark, engine) => {
-                databricks::list_relations(engine.as_ref(), query_ctx, conn, db_schema, token)
-            }
+            Impl(Databricks | Spark, engine) => databricks::list_relations(
+                engine.as_ref(),
+                state,
+                query_ctx,
+                conn,
+                db_schema,
+                token,
+            ),
             Impl(Redshift, engine) => {
                 redshift::list_relations(engine.as_ref(), query_ctx, conn, db_schema, token)
             }
@@ -4898,15 +4910,6 @@ impl AdapterImpl {
             sql,
             self.adapter_type(),
         ))
-    }
-
-    /// DatabricksAdapter https://github.com/databricks/dbt-databricks/blob/2c3aa9fdddbab30a3c4a660c5e98722e989a592b/dbt/adapters/databricks/impl.py#L1135-L1137
-    pub fn yaml_quote_backtick_values(&self, yaml_body: &str) -> AdapterResult<String> {
-        debug_assert!(
-            self.adapter_type() == Databricks,
-            "yaml_quote_backtick_values is a Databricks-specific adapter operation"
-        );
-        Ok(crate::relation::databricks::metric_view::quote_metric_view_sources(yaml_body))
     }
 
     /// Drop the trailing statement terminator from a node body so it can be
