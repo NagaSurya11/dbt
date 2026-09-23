@@ -220,27 +220,23 @@ impl ColumnStatic {
                     | "VARCHAR"
                     | "CHAR"
                     | "CHARACTER VARYING"
-                    | "CLOB" => "STRING".to_string(),
+                    | "CLOB" => "STRING",
                     "BINARY"
                     | "VARBINARY"
-                    | "BLOB" => "BINARY".to_string(),
-                    "TINYINT" => "TINYINT".to_string(),
-                    "SMALLINT" => "SMALLINT".to_string(),
-                    "INT" | "INTEGER" => "INT".to_string(),
-                    "BIGINT" | "LONG" => "BIGINT".to_string(),
-                    "FLOAT" | "REAL" => "FLOAT".to_string(),
-                    "DOUBLE" | "DOUBLE PRECISION" => "DOUBLE".to_string(),
-                    "NUMERIC" => "DECIMAL".to_string(),
-                    "DATETIME" => "TIMESTAMP".to_string(),
-                    "TIMESTAMP WITH TIME ZONE" | "TIMESTAMP WITHOUT TIME ZONE" => {
-                        "TIMESTAMP".to_string()
+                    | "BLOB" => "BINARY",
+                    "TINYINT" => "TINYINT",
+                    "SMALLINT" => "SMALLINT",
+                    "INT" | "INTEGER" => "INT",
+                    "BIGINT" | "LONG" => "BIGINT",
+                    "FLOAT" | "REAL" => "FLOAT",
+                    "DOUBLE" | "DOUBLE PRECISION" => "DOUBLE",
+                    "NUMERIC" => "DECIMAL",
+                    "DATETIME" => "TIMESTAMP",
+                    "TIMESTAMP WITH TIME ZONE" | "TIMESTAMP WITHOUT TIME ZONE" => "TIMESTAMP",
+                    _ if normalized.starts_with("VARCHAR(") || normalized.starts_with("CHAR(") => {
+                        "STRING"
                     }
-                    _ if normalized.starts_with("VARCHAR(")
-                        || normalized.starts_with("CHAR(") =>
-                    {
-                        "STRING".to_string()
-                    }
-                    _ => column_type.to_string(),
+                    _ => column_type,
                 }
             }
             // https://github.com/microsoft/dbt-fabric/blob/81d9764e24b00e7c923a2235ba68fa6bd6b90ea9/dbt/adapters/fabric/fabric_column.py#L8
