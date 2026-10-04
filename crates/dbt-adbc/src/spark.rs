@@ -35,6 +35,9 @@ pub const SESSION_CONFIG_PREFIX: &str = "spark.opt.";
 
 pub const KERBEROS_SERVICE_NAME: &str = "spark.kerberos.service_name";
 
+// Thrift TLS switch of the ADBC Hive2/Spark driver (enabled by default there)
+pub const TLS_ENABLED: &str = "adbc.standard_options.tls.enabled";
+
 pub mod livy {
     pub const SESSION_KIND: &str = "spark.livy.session_kind";
     pub mod session_kind {

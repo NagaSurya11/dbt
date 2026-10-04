@@ -19,7 +19,10 @@ enum ThriftTransportType {
 
 #[derive(Debug)]
 enum ThriftAuthType<'a> {
-    Plain { username: &'a str },
+    Plain {
+        username: &'a str,
+        password: Option<&'a str>,
+    },
     NoSasl,
     Ldap,
     Kerberos { service_name: &'a str },
@@ -48,6 +51,7 @@ enum SparkAuthIR<'a> {
         port: Option<u64>,
         auth: ThriftAuthType<'a>,
         transport: ThriftTransportType,
+        use_ssl: Option<bool>,
         session_params: HashMap<&'a str, String>,
     },
     Livy {
@@ -87,6 +91,7 @@ impl<'a> SparkAuthIR<'a> {
                 port,
                 auth,
                 transport,
+                use_ssl,
                 session_params,
             } => {
                 builder.with_named_option(spark::HOST, host)?;
@@ -95,8 +100,11 @@ impl<'a> SparkAuthIR<'a> {
                 }
 
                 let auth_type = match auth {
-                    ThriftAuthType::Plain { username } => {
+                    ThriftAuthType::Plain { username, password } => {
                         builder.with_named_option(spark::USERNAME, username)?;
+                        if let Some(password) = password {
+                            builder.with_named_option(spark::PASSWORD, password)?;
+                        }
                         spark::auth_type::PLAIN
                     }
                     ThriftAuthType::NoSasl => spark::auth_type::NOSASL,
@@ -113,6 +121,9 @@ impl<'a> SparkAuthIR<'a> {
                     ThriftTransportType::Binary => spark::transport_api::THRIFT_BINARY,
                 };
                 builder.with_named_option(spark::TRANSPORT_API, transport_api)?;
+                if let Some(use_ssl) = use_ssl {
+                    builder.with_named_option(spark::TLS_ENABLED, use_ssl.to_string())?;
+                }
 
                 apply_session_params(&session_params, &mut builder)?;
             }
@@ -248,6 +259,7 @@ fn parse_auth<'a>(
             host,
             port,
             session_params,
+            use_ssl: config.get_bool("use_ssl"),
             transport: match method {
                 "thrift" => ThriftTransportType::Binary,
                 "http" => ThriftTransportType::Http,
@@ -258,7 +270,10 @@ fn parse_auth<'a>(
                     let username = config.get_str("user").ok_or_else(|| {
                         AuthError::config("'user' is required when auth is 'PLAIN' or 'NONE'")
                     })?;
-                    Ok(ThriftAuthType::Plain { username })
+                    Ok(ThriftAuthType::Plain {
+                        username,
+                        password: config.get_str("password"),
+                    })
                 }
                 Some("NOSASL") => Ok(ThriftAuthType::NoSasl),
                 Some("LDAP") => Ok(ThriftAuthType::Ldap),
@@ -422,6 +437,27 @@ mod tests {
 
             assert_eq!(other_option_value(&builder, spark::AUTH_TYPE), Some(option));
         }
+    }
+
+    #[test]
+    fn thrift_plain_forwards_password_and_use_ssl() {
+        let config = Mapping::from_iter([
+            ("host".into(), "myhost".into()),
+            ("method".into(), "thrift".into()),
+            ("auth".into(), "PLAIN".into()),
+            ("user".into(), "me".into()),
+            ("password".into(), "pw".into()),
+            ("use_ssl".into(), false.into()),
+        ]);
+        let builder = SparkAuth::new(Box::new(crate::NoopAuthWarningPrinter))
+            .configure(&AdapterConfig::new(config))
+            .expect("configure");
+        assert_eq!(other_option_value(&builder, spark::USERNAME), Some("me"));
+        assert_eq!(other_option_value(&builder, spark::PASSWORD), Some("pw"));
+        assert_eq!(
+            other_option_value(&builder, spark::TLS_ENABLED),
+            Some("false")
+        );
     }
 
     #[test]
