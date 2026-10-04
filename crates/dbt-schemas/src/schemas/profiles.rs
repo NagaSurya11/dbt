@@ -1177,6 +1177,8 @@ pub enum SparkAuth {
     Token,
     #[serde(rename = "AWS_SIGV4")]
     AwsSigV4,
+    #[serde(rename = "OIDC")]
+    Oidc,
 }
 
 impl Display for SparkAuth {
@@ -1191,6 +1193,7 @@ impl Display for SparkAuth {
             Self::Basic => write!(f, "BASIC"),
             Self::AwsSigV4 => write!(f, "AWS_SIGV4"),
             Self::Token => write!(f, "TOKEN"),
+            Self::Oidc => write!(f, "OIDC"),
         }
     }
 }
@@ -1209,6 +1212,7 @@ impl std::str::FromStr for SparkAuth {
             "BASIC" => Ok(Self::Basic),
             "TOKEN" => Ok(Self::Token),
             "AWS_SIGV4" => Ok(Self::AwsSigV4),
+            "OIDC" => Ok(Self::Oidc),
             _ => Err(format!("Invalid Spark auth mode: {s}")),
         }
     }
@@ -1236,6 +1240,18 @@ pub struct SparkDbConfig {
     pub password: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub kerberos_service_name: Option<String>,
+    // OIDC (auth: OIDC): OAuth2 client_credentials against Keycloak / Entra ID. The ADBC
+    // driver fetches and caches the token, dbt only forwards these.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub token_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_secret: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub token_refresh_seconds: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub platform_hint: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

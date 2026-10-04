@@ -315,7 +315,7 @@ impl DefaultTypeOps {
         // Null-typed columns (all values null, no real type) are rendered as "text"
         // before entering the SqlType pipeline.
         if data_type.is_null() {
-            out.push_str("text");
+            out.push_str(if adapter_type == Spark { "STRING" } else { "text" });
             return Ok(());
         }
 
@@ -337,6 +337,7 @@ impl DefaultTypeOps {
             ) => match adapter_type {
                 Bigquery => "int64",
                 Databricks => "bigint",
+                Spark => "int",
                 _ => "integer",
             },
 
@@ -344,6 +345,7 @@ impl DefaultTypeOps {
             (SqlType::Real | SqlType::HalfFloat, _) => match adapter_type {
                 Bigquery => "float64",
                 Databricks => "float",
+                Spark => "float",
                 Fabric => "real",
                 // Exasol float type is DOUBLE PRECISION (no float8 alias).
                 Exasol => "DOUBLE PRECISION",
@@ -354,6 +356,7 @@ impl DefaultTypeOps {
             (SqlType::Double | SqlType::Float(_), _) => match adapter_type {
                 Bigquery => "float64",
                 Databricks => "double",
+                Spark => "double",
                 // Divergence: upstream has an implicit narrowing bug we fix
                 // see https://github.com/microsoft/dbt-fabric/blob/0de219082282724a789b0d1b18509d39899da8e1/dbt/adapters/fabric/fabric_adapter.py#L117
                 // https://learn.microsoft.com/en-us/sql/t-sql/data-types/float-and-real-transact-sql?view=fabric&preserve-view=true
@@ -378,6 +381,8 @@ impl DefaultTypeOps {
                 (Fabric, _) => "float",
                 (Databricks, 1..) => "double",
                 (Databricks, ..=0) => "bigint",
+                (Spark, 1..) => "double",
+                (Spark, ..=0) => "bigint",
                 // Exasol: fractional -> DOUBLE PRECISION; zero/negative scale
                 // falls through to "integer" (a valid DECIMAL(18,0) alias).
                 (Exasol, 1..) => "DOUBLE PRECISION",
@@ -400,6 +405,7 @@ impl DefaultTypeOps {
             (SqlType::Timestamp { .. }, _) => match adapter_type {
                 Bigquery => "datetime",
                 Databricks => "timestamp",
+                Spark => "timestamp",
                 Fabric => "datetime2(6)",
                 Exasol => "timestamp",
                 _ => "timestamp without time zone",
@@ -412,6 +418,7 @@ impl DefaultTypeOps {
             // Upstream maps Duration and Interval Arrow types to time.
             (SqlType::Interval(_) | SqlType::Time { .. }, _) => match adapter_type {
                 Fabric => "time(6)",
+                Spark => "string",
                 // Exasol stores a time-of-day value as TIMESTAMP.
                 Exasol => "timestamp",
                 _ => "time",
@@ -421,6 +428,7 @@ impl DefaultTypeOps {
             (SqlType::Varchar(..) | SqlType::Text | SqlType::Clob | SqlType::Char(_), _) => {
                 match adapter_type {
                     Bigquery | Databricks => "string",
+                    Spark => "STRING",
                     // technically should be `varchar(N)`
                     // where `N` is based on the max length of the strings in the column
                     // but that information isn't available here
@@ -1282,6 +1290,7 @@ mod tests {
         let convert_integer_type = |adapter_type| convert_type(&DataType::Int64, adapter_type);
         assert_eq!(convert_integer_type(Bigquery), "int64");
         assert_eq!(convert_integer_type(Databricks), "bigint");
+        assert_eq!(convert_integer_type(Spark), "int");
         assert_eq!(convert_integer_type(Postgres), "integer");
         assert_eq!(convert_integer_type(Snowflake), "integer");
         assert_eq!(convert_integer_type(Redshift), "integer");
@@ -1343,6 +1352,7 @@ mod tests {
         let convert_floating_type = |adapter_type| convert_type(&DataType::Float64, adapter_type);
         assert_eq!(convert_floating_type(Bigquery), "float64");
         assert_eq!(convert_floating_type(Databricks), "double");
+        assert_eq!(convert_floating_type(Spark), "double");
         assert_eq!(convert_floating_type(Postgres), "float8");
         assert_eq!(convert_floating_type(Snowflake), "float8");
         assert_eq!(convert_floating_type(Redshift), "float8");
@@ -1350,6 +1360,7 @@ mod tests {
             |adapter_type| convert_type(&DataType::Decimal32(10, 0), adapter_type);
         assert_eq!(convert_decimal_type(Bigquery), "int64");
         assert_eq!(convert_decimal_type(Databricks), "bigint");
+        assert_eq!(convert_decimal_type(Spark), "bigint");
         assert_eq!(convert_decimal_type(Postgres), "integer");
         assert_eq!(convert_decimal_type(Snowflake), "integer");
         assert_eq!(convert_decimal_type(Redshift), "integer");
@@ -1357,6 +1368,7 @@ mod tests {
             |adapter_type| convert_type(&DataType::Decimal128(10, 2), adapter_type);
         assert_eq!(convert_decimal_type(Bigquery), "float64");
         assert_eq!(convert_decimal_type(Databricks), "double");
+        assert_eq!(convert_decimal_type(Spark), "double");
         assert_eq!(convert_decimal_type(Postgres), "float8");
         assert_eq!(convert_decimal_type(Snowflake), "float8");
         assert_eq!(convert_decimal_type(Redshift), "float8");
@@ -1382,6 +1394,7 @@ mod tests {
         };
         assert_eq!(convert_datetime_type(Bigquery), "datetime");
         assert_eq!(convert_datetime_type(Databricks), "timestamp");
+        assert_eq!(convert_datetime_type(Spark), "timestamp");
         assert_eq!(
             convert_datetime_type(Postgres),
             "timestamp without time zone"
@@ -1421,6 +1434,7 @@ mod tests {
         let convert_text_type = |adapter_type| convert_type(&DataType::Utf8, adapter_type);
         assert_eq!(convert_text_type(Bigquery), "string");
         assert_eq!(convert_text_type(Databricks), "string");
+        assert_eq!(convert_text_type(Spark), "STRING");
         assert_eq!(convert_text_type(Postgres), "text");
         assert_eq!(convert_text_type(Snowflake), "text");
         assert_eq!(convert_text_type(Redshift), "text");

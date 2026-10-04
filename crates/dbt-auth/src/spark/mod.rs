@@ -19,10 +19,25 @@ enum ThriftTransportType {
 
 #[derive(Debug)]
 enum ThriftAuthType<'a> {
-    Plain { username: &'a str },
+    Plain {
+        username: &'a str,
+        password: Option<&'a str>,
+    },
     NoSasl,
     Ldap,
-    Kerberos { service_name: &'a str },
+    Kerberos {
+        service_name: &'a str,
+    },
+    // OAuth2 client_credentials. The ADBC driver fetches (and caches) the token and sends
+    // it as the SASL PLAIN password, so only the request parameters are forwarded here.
+    Oidc {
+        token_url: &'a str,
+        client_id: &'a str,
+        client_secret: &'a str,
+        scope: Option<&'a str>,
+        username: Option<&'a str>,
+        refresh_seconds: Option<u64>,
+    },
 }
 
 #[derive(Debug)]
@@ -48,6 +63,7 @@ enum SparkAuthIR<'a> {
         port: Option<u64>,
         auth: ThriftAuthType<'a>,
         transport: ThriftTransportType,
+        use_ssl: Option<bool>,
         session_params: HashMap<&'a str, String>,
     },
     Livy {
@@ -87,6 +103,7 @@ impl<'a> SparkAuthIR<'a> {
                 port,
                 auth,
                 transport,
+                use_ssl,
                 session_params,
             } => {
                 builder.with_named_option(spark::HOST, host)?;
@@ -95,8 +112,11 @@ impl<'a> SparkAuthIR<'a> {
                 }
 
                 let auth_type = match auth {
-                    ThriftAuthType::Plain { username } => {
+                    ThriftAuthType::Plain { username, password } => {
                         builder.with_named_option(spark::USERNAME, username)?;
+                        if let Some(password) = password {
+                            builder.with_named_option(spark::PASSWORD, password)?;
+                        }
                         spark::auth_type::PLAIN
                     }
                     ThriftAuthType::NoSasl => spark::auth_type::NOSASL,
@@ -104,6 +124,32 @@ impl<'a> SparkAuthIR<'a> {
                     ThriftAuthType::Kerberos { service_name } => {
                         builder.with_named_option(spark::KERBEROS_SERVICE_NAME, service_name)?;
                         spark::auth_type::KERBEROS
+                    }
+                    ThriftAuthType::Oidc {
+                        token_url,
+                        client_id,
+                        client_secret,
+                        scope,
+                        username,
+                        refresh_seconds,
+                    } => {
+                        builder.with_named_option(spark::OIDC_TOKEN_URL, token_url)?;
+                        builder.with_named_option(spark::OIDC_CLIENT_ID, client_id)?;
+                        builder.with_named_option(spark::OIDC_CLIENT_SECRET, client_secret)?;
+                        if let Some(scope) = scope {
+                            builder.with_named_option(spark::OIDC_SCOPE, scope)?;
+                        }
+                        if let Some(seconds) = refresh_seconds {
+                            builder.with_named_option(
+                                spark::OIDC_REFRESH_SECONDS,
+                                seconds.to_string(),
+                            )?;
+                        }
+                        // Optional: the driver falls back to the client id as the SASL user.
+                        if let Some(username) = username {
+                            builder.with_named_option(spark::USERNAME, username)?;
+                        }
+                        spark::auth_type::OIDC
                     }
                 };
                 builder.with_named_option(spark::AUTH_TYPE, auth_type)?;
@@ -113,6 +159,9 @@ impl<'a> SparkAuthIR<'a> {
                     ThriftTransportType::Binary => spark::transport_api::THRIFT_BINARY,
                 };
                 builder.with_named_option(spark::TRANSPORT_API, transport_api)?;
+                if let Some(use_ssl) = use_ssl {
+                    builder.with_named_option(spark::USE_SSL, use_ssl.to_string())?;
+                }
 
                 apply_session_params(&session_params, &mut builder)?;
             }
@@ -252,6 +301,7 @@ fn parse_auth<'a>(
             host,
             port,
             session_params,
+            use_ssl: config.get_bool("use_ssl"),
             transport: match method {
                 "thrift" => ThriftTransportType::Binary,
                 "http" => ThriftTransportType::Http,
@@ -262,7 +312,10 @@ fn parse_auth<'a>(
                     let username = config.get_str("user").ok_or_else(|| {
                         AuthError::config("'user' is required when auth is 'PLAIN' or 'NONE'")
                     })?;
-                    Ok(ThriftAuthType::Plain { username })
+                    Ok(ThriftAuthType::Plain {
+                        username,
+                        password: config.get_str("password"),
+                    })
                 }
                 Some("NOSASL") => Ok(ThriftAuthType::NoSasl),
                 Some("LDAP") => Ok(ThriftAuthType::Ldap),
@@ -274,6 +327,38 @@ fn parse_auth<'a>(
                             )
                         })?;
                     Ok(ThriftAuthType::Kerberos { service_name })
+                }
+                Some("OIDC") => {
+                    // The driver's HTTP transport has no SASL PLAIN, and Kyuubi takes the JWT
+                    // as the SASL PLAIN password on the binary transport.
+                    if method != "thrift" {
+                        return Err(AuthError::config(
+                            "auth 'OIDC' is only supported with method 'thrift'",
+                        ));
+                    }
+                    let token_url = config.get_str("token_url").ok_or_else(|| {
+                        AuthError::config("'token_url' is required when auth is 'OIDC'")
+                    })?;
+                    let client_id = config.get_str("client_id").ok_or_else(|| {
+                        AuthError::config("'client_id' is required when auth is 'OIDC'")
+                    })?;
+                    let client_secret = config.get_str("client_secret").ok_or_else(|| {
+                        AuthError::config("'client_secret' is required when auth is 'OIDC'")
+                    })?;
+                    let refresh_seconds = match config.get_string("token_refresh_seconds") {
+                        None => None,
+                        Some(v) => Some(v.parse::<u64>().map_err(|_| {
+                            AuthError::config("'token_refresh_seconds' must be a number")
+                        })?),
+                    };
+                    Ok(ThriftAuthType::Oidc {
+                        token_url,
+                        client_id,
+                        client_secret,
+                        scope: config.get_str("scope"),
+                        username: config.get_str("user"),
+                        refresh_seconds,
+                    })
                 }
                 Some(_) => Err(AuthError::config("invalid 'auth' for Spark Thrift")),
             }?,
@@ -426,6 +511,107 @@ mod tests {
 
             assert_eq!(other_option_value(&builder, spark::AUTH_TYPE), Some(option));
         }
+    }
+
+    #[test]
+    fn thrift_plain_forwards_password_and_use_ssl() {
+        let config = Mapping::from_iter([
+            ("host".into(), "myhost".into()),
+            ("method".into(), "thrift".into()),
+            ("auth".into(), "PLAIN".into()),
+            ("user".into(), "me".into()),
+            ("password".into(), "pw".into()),
+            ("use_ssl".into(), true.into()),
+        ]);
+        let builder = SparkAuth::new(Box::new(crate::NoopAuthWarningPrinter))
+            .configure(&AdapterConfig::new(config))
+            .expect("configure");
+        assert_eq!(other_option_value(&builder, spark::USERNAME), Some("me"));
+        assert_eq!(other_option_value(&builder, spark::PASSWORD), Some("pw"));
+        assert_eq!(other_option_value(&builder, spark::USE_SSL), Some("true"));
+    }
+
+    #[test]
+    fn thrift_oidc_ok() {
+        let config = Mapping::from_iter([
+            ("host".into(), "myhost".into()),
+            ("method".into(), "thrift".into()),
+            ("auth".into(), "OIDC".into()),
+            (
+                "token_url".into(),
+                "https://kc/realms/r/protocol/openid-connect/token".into(),
+            ),
+            ("client_id".into(), "airflow".into()),
+            ("client_secret".into(), "s3cret".into()),
+            ("scope".into(), "openid".into()),
+        ]);
+        let builder = SparkAuth::new(Box::new(crate::NoopAuthWarningPrinter))
+            .configure(&AdapterConfig::new(config))
+            .expect("configure");
+        assert_eq!(
+            other_option_value(&builder, spark::AUTH_TYPE),
+            Some(spark::auth_type::OIDC)
+        );
+        assert_eq!(
+            other_option_value(&builder, spark::OIDC_TOKEN_URL),
+            Some("https://kc/realms/r/protocol/openid-connect/token")
+        );
+        assert_eq!(
+            other_option_value(&builder, spark::OIDC_CLIENT_ID),
+            Some("airflow")
+        );
+        assert_eq!(
+            other_option_value(&builder, spark::OIDC_CLIENT_SECRET),
+            Some("s3cret")
+        );
+        assert_eq!(
+            other_option_value(&builder, spark::OIDC_SCOPE),
+            Some("openid")
+        );
+        // `user` is optional for OIDC (the driver defaults it to the client id)
+        assert_eq!(other_option_value(&builder, spark::USERNAME), None);
+    }
+
+    #[test]
+    fn thrift_oidc_err() {
+        let base = [
+            ("host", "myhost"),
+            ("method", "thrift"),
+            ("auth", "OIDC"),
+            ("token_url", "https://kc/token"),
+            ("client_id", "airflow"),
+            ("client_secret", "s3cret"),
+        ];
+        for missing in ["token_url", "client_id", "client_secret"] {
+            let config = Mapping::from_iter(
+                base.iter()
+                    .filter(|(k, _)| *k != missing)
+                    .map(|(k, v)| ((*k).to_string().into(), (*v).to_string().into())),
+            );
+            let err = SparkAuth::new(Box::new(crate::NoopAuthWarningPrinter))
+                .configure(&AdapterConfig::new(config))
+                .expect_err("configure should fail");
+            assert_eq!(
+                err.msg(),
+                format!("'{missing}' is required when auth is 'OIDC'")
+            );
+        }
+
+        let config = Mapping::from_iter(base.iter().map(|(k, v)| {
+            (
+                (*k).to_string().into(),
+                (if *k == "method" { "http" } else { *v })
+                    .to_string()
+                    .into(),
+            )
+        }));
+        let err = SparkAuth::new(Box::new(crate::NoopAuthWarningPrinter))
+            .configure(&AdapterConfig::new(config))
+            .expect_err("configure should fail");
+        assert_eq!(
+            err.msg(),
+            "auth 'OIDC' is only supported with method 'thrift'"
+        );
     }
 
     #[test]

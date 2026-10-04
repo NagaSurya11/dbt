@@ -18,6 +18,8 @@ pub mod auth_type {
     pub const PLAIN: &str = "plain";
     pub const LDAP: &str = "ldap";
     pub const KERBEROS: &str = "kerberos";
+    // OAuth2 client_credentials; the driver fetches and caches the token
+    pub const OIDC: &str = "oidc";
 
     // Livy
     pub const BASIC: &str = "basic";
@@ -34,6 +36,15 @@ pub const PASSWORD: &str = "password";
 pub const SESSION_CONFIG_PREFIX: &str = "spark.opt.";
 
 pub const KERBEROS_SERVICE_NAME: &str = "spark.kerberos.service_name";
+
+pub const USE_SSL: &str = "spark.use_ssl";
+
+// OIDC (auth_type::OIDC): read by the ADBC Spark driver, which does the token request
+pub const OIDC_TOKEN_URL: &str = "spark.oidc.token_url";
+pub const OIDC_CLIENT_ID: &str = "spark.oidc.client_id";
+pub const OIDC_CLIENT_SECRET: &str = "spark.oidc.client_secret";
+pub const OIDC_SCOPE: &str = "spark.oidc.scope";
+pub const OIDC_REFRESH_SECONDS: &str = "spark.oidc.refresh_seconds";
 
 pub mod livy {
     pub const SESSION_KIND: &str = "spark.livy.session_kind";

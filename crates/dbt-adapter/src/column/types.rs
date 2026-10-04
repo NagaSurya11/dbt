@@ -203,9 +203,39 @@ impl ColumnStatic {
                 "INTEGER" => "INT64",
                 _ => column_type,
             },
-            AdapterType::Databricks | AdapterType::Spark => {
+            AdapterType::Databricks => {
                 match column_type.to_uppercase().as_str() {
                     "LONG" => "BIGINT",
+                    _ => column_type,
+                }
+            }
+            AdapterType::Spark => {
+                let normalized = column_type.trim().to_uppercase();
+                match normalized.as_str() {
+                    // Spark SQL's unbounded string type is STRING. VARCHAR/CHAR
+                    // require a length in Spark DDL and are not suitable for the
+                    // generic type names emitted by dbt seed inference.
+                    "TEXT"
+                    | "STRING"
+                    | "VARCHAR"
+                    | "CHAR"
+                    | "CHARACTER VARYING"
+                    | "CLOB" => "STRING",
+                    "BINARY"
+                    | "VARBINARY"
+                    | "BLOB" => "BINARY",
+                    "TINYINT" => "TINYINT",
+                    "SMALLINT" => "SMALLINT",
+                    "INT" | "INTEGER" => "INT",
+                    "BIGINT" | "LONG" => "BIGINT",
+                    "FLOAT" | "REAL" => "FLOAT",
+                    "DOUBLE" | "DOUBLE PRECISION" => "DOUBLE",
+                    "NUMERIC" => "DECIMAL",
+                    "DATETIME" => "TIMESTAMP",
+                    "TIMESTAMP WITH TIME ZONE" | "TIMESTAMP WITHOUT TIME ZONE" => "TIMESTAMP",
+                    _ if normalized.starts_with("VARCHAR(") || normalized.starts_with("CHAR(") => {
+                        "STRING"
+                    }
                     _ => column_type,
                 }
             }
@@ -1302,11 +1332,55 @@ mod tests {
             ColumnStatic::new(AdapterType::Databricks).translate_type("LONG"),
             "bigint"
         );
-        // Spark shares the same rewrite but is not lowercased.
+        // Databricks and Spark both preserve the canonical casing of rewritten
+        // types, but Spark has its own broader SQL type normalization below.
         assert_eq!(
             ColumnStatic::new(AdapterType::Spark).translate_type("LONG"),
             "BIGINT"
         );
+    }
+
+    #[test]
+    fn test_translate_type_spark_sql_aliases() {
+        let col = ColumnStatic::new(AdapterType::Spark);
+        for (input, expected) in [
+            ("TEXT", "STRING"),
+            ("character varying", "STRING"),
+            ("VARCHAR", "STRING"),
+            ("VARCHAR(255)", "STRING"),
+            ("CHAR(10)", "STRING"),
+            ("BLOB", "BINARY"),
+            ("VARBINARY", "BINARY"),
+            ("INTEGER", "INT"),
+            ("LONG", "BIGINT"),
+            ("REAL", "FLOAT"),
+            ("DOUBLE PRECISION", "DOUBLE"),
+            ("NUMERIC", "DECIMAL"),
+            ("DATETIME", "TIMESTAMP"),
+            ("TIMESTAMP WITH TIME ZONE", "TIMESTAMP"),
+        ] {
+            assert_eq!(col.translate_type(input), expected, "input type: {input}");
+        }
+    }
+
+    #[test]
+    fn test_translate_type_spark_preserves_parameterized_and_complex_types() {
+        let col = ColumnStatic::new(AdapterType::Spark);
+        for input in [
+            "DECIMAL(10, 2)",
+            "ARRAY<STRING>",
+            "MAP<STRING, INT>",
+            "STRUCT<id: INT, name: STRING>",
+        ] {
+            assert_eq!(col.translate_type(input), input);
+        }
+    }
+
+    #[test]
+    fn test_translate_type_databricks_remains_distinct_from_spark() {
+        let col = ColumnStatic::new(AdapterType::Databricks);
+        assert_eq!(col.translate_type("TEXT"), "TEXT");
+        assert_eq!(col.translate_type("INTEGER"), "INTEGER");
     }
 
     #[test]
