@@ -35,6 +35,10 @@ pub const SESSION_CONFIG_PREFIX: &str = "spark.opt.";
 
 pub const KERBEROS_SERVICE_NAME: &str = "spark.kerberos.service_name";
 
+// Thrift timeouts, read by the ADBC Spark driver (the driver's own defaults are 60s / 30s)
+pub const QUERY_TIMEOUT_SECONDS: &str = "adbc.apache.statement.query_timeout_s";
+pub const CONNECT_TIMEOUT_MS: &str = "adbc.spark.connect_timeout_ms";
+
 pub mod livy {
     pub const SESSION_KIND: &str = "spark.livy.session_kind";
     pub mod session_kind {
