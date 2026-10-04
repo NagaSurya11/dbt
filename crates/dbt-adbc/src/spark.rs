@@ -46,6 +46,10 @@ pub const OIDC_CLIENT_SECRET: &str = "spark.oidc.client_secret";
 pub const OIDC_SCOPE: &str = "spark.oidc.scope";
 pub const OIDC_REFRESH_SECONDS: &str = "spark.oidc.refresh_seconds";
 
+// Thrift timeouts, read by the ADBC Spark driver (the driver's own defaults are 60s / 30s)
+pub const QUERY_TIMEOUT_SECONDS: &str = "adbc.apache.statement.query_timeout_s";
+pub const CONNECT_TIMEOUT_MS: &str = "adbc.spark.connect_timeout_ms";
+
 pub mod livy {
     pub const SESSION_KIND: &str = "spark.livy.session_kind";
     pub mod session_kind {

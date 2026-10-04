@@ -439,11 +439,43 @@ fn parse_auth<'a>(
     Ok(ir)
 }
 
+/// Reads a whole number of seconds from `field`; unset or empty means "not configured".
+fn parse_seconds(config: &AdapterConfig, field: &str) -> Result<Option<u64>, AuthError> {
+    let Some(value) = config.get_string(field) else {
+        return Ok(None);
+    };
+    let value = value.trim();
+    if value.is_empty() {
+        return Ok(None);
+    }
+    value.parse::<u64>().map(Some).map_err(|_| {
+        AuthError::config(format!(
+            "'{field}' must be a whole number of seconds, got '{value}'"
+        ))
+    })
+}
+
+/// Forwards the timeouts the ADBC Spark driver would otherwise default (60s per statement, 30s
+/// to open a session), which cut off long queries and cold server-engine starts. Thrift/HTTP
+/// only: Livy and Spark Connect do not run through the Hive2 code that reads these options.
 fn apply_connection_args(
-    _config: &AdapterConfig,
-    builder: database::Builder,
+    config: &AdapterConfig,
+    mut builder: database::Builder,
     _warning_printer: &dyn AuthWarningPrinter,
 ) -> Result<database::Builder, AuthError> {
+    if !matches!(config.get_str("method"), Some("thrift") | Some("http")) {
+        return Ok(builder);
+    }
+
+    if let Some(seconds) = parse_seconds(config, "query_timeout")? {
+        builder.with_named_option(spark::QUERY_TIMEOUT_SECONDS, seconds.to_string())?;
+    }
+    if let Some(seconds) = parse_seconds(config, "session_open_timeout")? {
+        let millis = seconds
+            .checked_mul(1000)
+            .ok_or_else(|| AuthError::config("'session_open_timeout' is too large"))?;
+        builder.with_named_option(spark::CONNECT_TIMEOUT_MS, millis.to_string())?;
+    }
     Ok(builder)
 }
 
@@ -529,6 +561,64 @@ mod tests {
         assert_eq!(other_option_value(&builder, spark::USERNAME), Some("me"));
         assert_eq!(other_option_value(&builder, spark::PASSWORD), Some("pw"));
         assert_eq!(other_option_value(&builder, spark::USE_SSL), Some("true"));
+    }
+
+    #[test]
+    fn thrift_forwards_query_and_session_open_timeouts() {
+        // Numbers and strings (what a rendered `{{ env_var(..) }}` yields) both work.
+        for (query, open) in [
+            (YmlValue::from(3600u64), YmlValue::from(600u64)),
+            (YmlValue::from("3600"), YmlValue::from("600")),
+        ] {
+            let config = Mapping::from_iter([
+                ("host".into(), "myhost".into()),
+                ("method".into(), "thrift".into()),
+                ("auth".into(), "NOSASL".into()),
+                ("query_timeout".into(), query),
+                ("session_open_timeout".into(), open),
+            ]);
+            let builder = SparkAuth::new(Box::new(crate::NoopAuthWarningPrinter))
+                .configure(&AdapterConfig::new(config))
+                .expect("configure");
+            assert_eq!(
+                other_option_value(&builder, spark::QUERY_TIMEOUT_SECONDS),
+                Some("3600")
+            );
+            assert_eq!(
+                other_option_value(&builder, spark::CONNECT_TIMEOUT_MS),
+                Some("600000")
+            );
+        }
+    }
+
+    #[test]
+    fn thrift_timeouts_unset_leave_driver_defaults() {
+        let config = Mapping::from_iter([
+            ("host".into(), "myhost".into()),
+            ("method".into(), "thrift".into()),
+            ("auth".into(), "NOSASL".into()),
+            ("query_timeout".into(), "".into()),
+        ]);
+        let builder = SparkAuth::new(Box::new(crate::NoopAuthWarningPrinter))
+            .configure(&AdapterConfig::new(config))
+            .expect("configure");
+        assert_eq!(other_option_value(&builder, spark::QUERY_TIMEOUT_SECONDS), None);
+        assert_eq!(other_option_value(&builder, spark::CONNECT_TIMEOUT_MS), None);
+    }
+
+    #[test]
+    fn thrift_timeout_rejects_non_numeric() {
+        let config = Mapping::from_iter([
+            ("host".into(), "myhost".into()),
+            ("method".into(), "thrift".into()),
+            ("auth".into(), "NOSASL".into()),
+            ("query_timeout".into(), "1h".into()),
+        ]);
+        assert!(
+            SparkAuth::new(Box::new(crate::NoopAuthWarningPrinter))
+                .configure(&AdapterConfig::new(config))
+                .is_err()
+        );
     }
 
     #[test]

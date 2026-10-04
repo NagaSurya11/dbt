@@ -1252,6 +1252,16 @@ pub struct SparkDbConfig {
     pub scope: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub token_refresh_seconds: Option<u64>,
+    // Thrift only. Seconds the ADBC driver lets one statement run (execute + poll + fetch) before
+    // it cancels it client-side and sends the same limit server-side. The driver default is 60;
+    // 0 disables the limit. Accepts a number or a string so `{{ env_var(..) }}` works.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub query_timeout: Option<StringOrInteger>,
+    // Thrift only. Seconds the ADBC driver waits for the session to open (the server may be
+    // launching its Spark engine on a cold start). Driver default is 30; 0 disables the limit.
+    // Not `connect_timeout`: that one is the retry sleep, read by the shared retry engine.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_open_timeout: Option<StringOrInteger>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub platform_hint: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1268,7 +1278,6 @@ pub struct SparkDbConfig {
     // - organization
     // - poll_interval
     // - query_retries
-    // - query_timeout
     // - retry_all
     // - token
 }
