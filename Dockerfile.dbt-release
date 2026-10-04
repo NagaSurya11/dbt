@@ -15,6 +15,12 @@ ENV CARGO_BUILD_JOBS=8 \
 
 COPY . .
 
+# Opt-in to a lighter/faster build when the builder is short on disk:
+#   docker buildx build --build-arg RELEASE_LTO=off ...
+# Default (thin) keeps the workspace's own release profile unchanged.
+ARG RELEASE_LTO=thin
+ENV CARGO_PROFILE_RELEASE_LTO=${RELEASE_LTO}
+
 RUN cat crates/dbt-adapter/src/sql_types.rs \
     | grep -E 'Spark =>|Spark, 1|Spark, \.\.=0|Spark \} else' \
     || (echo "Expected Spark mappings were not copied into the build context" && exit 1)
